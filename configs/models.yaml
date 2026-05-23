@@ -1,0 +1,52 @@
+models:
+  yolo26n:
+    adapter: ultralytics
+    weights: yolo26n.pt
+
+  yolo12n:
+    adapter: ultralytics
+    weights: yolo12n.pt
+
+  yolo11n:
+    adapter: ultralytics
+    weights: yolo11n.pt
+
+  yolov10n:
+    adapter: ultralytics
+    weights: yolov10n.pt
+
+  yolov9c:
+    adapter: ultralytics
+    weights: yolov9c.pt
+
+  yolov8n:
+    adapter: ultralytics
+    weights: yolov8n.pt
+
+  yolov7-tiny:
+    adapter: yolov7
+    weights: yolov7-tiny.pt
+    repo_url: https://github.com/WongKinYiu/yolov7
+    repo_ref: main
+    repo_dir: external/yolov7
+    runtime:
+      type: uv-run
+
+  yolov6n:
+    adapter: yolov6
+    weights: yolov6n.pt
+    repo_url: https://github.com/meituan/YOLOv6
+    repo_ref: v3.0
+    repo_dir: external/YOLOv6
+    config_file: configs/yolov6n.py
+    runtime:
+      type: uv-run
+
+  yolov5n:
+    adapter: yolov5
+    weights: yolov5n.pt
+    repo_url: https://github.com/ultralytics/yolov5
+    repo_ref: v7.0
+    repo_dir: external/yolov5
+    runtime:
+      type: uv-run

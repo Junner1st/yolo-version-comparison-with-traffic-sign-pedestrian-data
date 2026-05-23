@@ -1,0 +1,29 @@
+dataset:
+  root: data
+  yaml: data/data.yaml
+
+train:
+  epochs: 100
+  imgsz: 640
+  batch: 16
+  workers: 2
+  patience: 20
+  lr0: 0.01
+  lrf: 0.01
+  momentum: 0.937
+  weight_decay: 0.0005
+  warmup_epochs: 3
+  augment: true
+  amp: false
+  device: auto
+  save_period: 10
+  seed: 42
+
+test:
+  split: test
+  conf: 0.25
+  iou: 0.45
+  max_images: 12
+
+runs:
+  root: runs
