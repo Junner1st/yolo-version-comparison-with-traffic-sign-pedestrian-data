@@ -47,7 +47,9 @@ class UltralyticsAdapter(VersionAdapter):
             print(f"Ultralytics train: YOLO({self.model.weights!r}).train({call})")
             return
 
-        with tee_output(run_dir / "logs" / "train.log"):
+        log_path = run_dir / "logs" / "train.log"
+        print(f"Training log: {log_path}")
+        with tee_output(log_path, echo=False):
             from ultralytics import YOLO
 
             model = YOLO(self.model.weights)

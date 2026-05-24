@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import logging
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import TextIO
@@ -9,21 +10,23 @@ import pyte
 
 
 class Tee:
-    def __init__(self, terminal_stream: TextIO, log_stream: TextIO) -> None:
+    def __init__(self, terminal_stream: TextIO | None, log_stream: TextIO) -> None:
         self.terminal_stream = terminal_stream
         self.log_stream = log_stream
         self.log_renderer = TerminalLogRenderer()
 
     def write(self, text: str) -> int:
-        self.terminal_stream.write(text)
-        self.terminal_stream.flush()
+        if self.terminal_stream is not None:
+            self.terminal_stream.write(text)
+            self.terminal_stream.flush()
 
         self.log_stream.write(self.log_renderer.feed(text))
         self.log_stream.flush()
         return len(text)
 
     def flush(self) -> None:
-        self.terminal_stream.flush()
+        if self.terminal_stream is not None:
+            self.terminal_stream.flush()
         self.log_stream.flush()
 
     def flush_pending(self) -> None:
@@ -71,12 +74,52 @@ def clean_log_text(text: str) -> str:
 
 
 @contextmanager
-def tee_output(log_path: Path):
+def tee_output(log_path: Path, echo: bool = True):
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a", encoding="utf-8") as log_file:
-        tee = Tee(sys.stdout, log_file)
+        tee = Tee(sys.stdout if echo else None, log_file)
+        handler_streams = redirect_logging_handlers(tee)
         with redirect_stdout(tee), redirect_stderr(tee):
             try:
                 yield
             finally:
                 tee.flush_pending()
+                restore_logging_handlers(handler_streams, tee, sys.stdout)
+
+
+def redirect_logging_handlers(tee: Tee) -> dict[logging.StreamHandler, TextIO]:
+    handler_streams: dict[logging.StreamHandler, TextIO] = {}
+    for handler in stream_handlers():
+        handler_streams[handler] = handler.stream
+        handler.stream = tee
+    return handler_streams
+
+
+def restore_logging_handlers(
+    handler_streams: dict[logging.StreamHandler, TextIO],
+    tee: Tee,
+    fallback_stream: TextIO,
+) -> None:
+    for handler, stream in handler_streams.items():
+        handler.stream = stream
+
+    for handler in stream_handlers():
+        if handler not in handler_streams and handler.stream is tee:
+            handler.stream = fallback_stream
+
+
+def stream_handlers() -> list[logging.StreamHandler]:
+    handlers: list[logging.StreamHandler] = []
+    for logger in all_loggers():
+        for handler in logger.handlers:
+            if isinstance(handler, logging.StreamHandler):
+                handlers.append(handler)
+    return handlers
+
+
+def all_loggers() -> list[logging.Logger]:
+    loggers = [logging.getLogger()]
+    for value in logging.root.manager.loggerDict.values():
+        if isinstance(value, logging.Logger):
+            loggers.append(value)
+    return loggers

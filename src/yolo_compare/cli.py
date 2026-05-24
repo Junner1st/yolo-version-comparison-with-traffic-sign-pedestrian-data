@@ -10,6 +10,7 @@ from yolo_compare.dataset import image_paths, prepare_dataset_yaml
 from yolo_compare.runs import create_run_dir
 from yolo_compare.snapshot import write_snapshot
 from yolo_compare.version_adapters import build_adapter
+from yolo_compare.version_adapters.base import require_repo
 
 
 DEFAULT_EXPERIMENT_CONFIG = Path("configs/experiment.yaml")
@@ -113,6 +114,7 @@ def train_one(
     experiment_path: Path,
     models_path: Path,
 ) -> Path:
+    validate_train_prerequisites(model, args.dry_run)
     run_dir = create_run_dir(experiment.runs.root, model.name, args.run_number)
     prepared_yaml = prepare_dataset_yaml(
         experiment.dataset.root,
@@ -138,6 +140,12 @@ def train_one(
     adapter = build_adapter(model)
     adapter.train(experiment, prepared_yaml, run_dir, args.dry_run)
     return run_dir
+
+
+def validate_train_prerequisites(model: ModelConfig, dry_run: bool) -> None:
+    if dry_run or model.adapter == "ultralytics":
+        return
+    require_repo(model)
 
 
 def test_one(
@@ -212,6 +220,8 @@ def print_test_summary(run_dir: Path, split: str, image_count: int | None = None
     print(f"Recall: {format_summary_value(overall.get('recall'))}")
     print(f"mAP50: {format_summary_value(overall.get('map50'))}")
     print(f"mAP50-95: {format_summary_value(overall.get('map50_95'))}")
+    ms_per_img = report.get("ms_per_img", {})
+    print(f"ms/img: {format_summary_value(ms_per_img.get('total'))}")
     print(f"Report: {report_path}")
 
 

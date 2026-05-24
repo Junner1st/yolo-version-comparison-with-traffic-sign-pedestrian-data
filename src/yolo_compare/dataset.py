@@ -21,11 +21,16 @@ def prepare_dataset_yaml(dataset_root: Path, source_yaml: Path, output_yaml: Pat
     return output_yaml
 
 
+def image_dir(dataset_root: Path, split: str) -> Path:
+    split_dir = "valid" if split == "val" else split
+    return dataset_root / split_dir / "images"
+
+
 def image_paths(dataset_root: Path, split: str) -> list[Path]:
-    image_dir = dataset_root / split / "images"
+    split_image_dir = image_dir(dataset_root, split)
     paths: list[Path] = []
     for pattern in IMAGE_EXTENSIONS:
-        paths.extend(image_dir.glob(pattern))
+        paths.extend(split_image_dir.glob(pattern))
     return sorted(paths)
 
 
@@ -34,4 +39,3 @@ def dataset_summary(dataset_root: Path) -> dict[str, int]:
         split: len(image_paths(dataset_root, split))
         for split in ("train", "valid", "test")
     }
-

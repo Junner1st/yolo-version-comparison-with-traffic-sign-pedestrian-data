@@ -2,7 +2,9 @@ data/
 runs/
 external/
 *.pt
-
+external/
+*.tar.xz
+*.zip
 
 .venv/
 __pycache__/

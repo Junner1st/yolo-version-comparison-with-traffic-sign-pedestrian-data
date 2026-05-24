@@ -23,9 +23,10 @@ models:
     adapter: ultralytics
     weights: yolov8n.pt
 
-  yolov7-tiny:
+  yolov7:
     adapter: yolov7
-    weights: yolov7-tiny.pt
+    weights: yolov7.pt
+    weights_url: https://github.com/WongKinYiu/yolov7/releases/download/v0.1/yolov7.pt
     repo_url: https://github.com/WongKinYiu/yolov7
     repo_ref: main
     repo_dir: external/yolov7
@@ -35,8 +36,9 @@ models:
   yolov6n:
     adapter: yolov6
     weights: yolov6n.pt
+    weights_url: https://github.com/meituan/YOLOv6/releases/download/0.3.0/yolov6n.pt
     repo_url: https://github.com/meituan/YOLOv6
-    repo_ref: v3.0
+    repo_ref: 0.3.0
     repo_dir: external/YOLOv6
     config_file: configs/yolov6n.py
     runtime:

@@ -86,7 +86,7 @@ uv run python src/test.py --run-dir run_yolov8n_1 --split test
 uv run python src/test.py --run-dir run_yolov8n_1 --split train
 ```
 
-`test.py` prints a final summary with image count, precision, recall, mAP50, mAP50-95, and the report path.
+`test.py` prints a final summary with image count, precision, recall, mAP50, mAP50-95, ms/img, and the report path.
 
 ## Environment
 
@@ -103,11 +103,11 @@ Run commands through `uv run`, for example:
 uv run python src/train.py --weights yolov8n --dry-run
 ```
 
-Legacy YOLO repositories have different dependency expectations. Clone them under `external/` when you need to run those adapters:
+Legacy YOLO repositories have different dependency expectations. When `repo_url` is configured in `configs/models.yaml`, the runner clones the repo into `external/` automatically if it is missing. You can also clone them manually:
 
 ```bash
 git clone --branch v7.0 https://github.com/ultralytics/yolov5 external/yolov5
-git clone --branch v3.0 https://github.com/meituan/YOLOv6 external/YOLOv6
+git clone --branch 0.3.0 https://github.com/meituan/YOLOv6 external/YOLOv6
 git clone https://github.com/WongKinYiu/yolov7 external/yolov7
 ```
 
@@ -159,7 +159,7 @@ A run directory contains:
 - `train/`: training outputs, curves, train-time validation images, and weights.
 - `val/`, `test/`, `train/`: independent evaluation outputs from `src/test.py --split ...`.
 - `predict/{split}/`: prediction images for the requested split.
-- `reports/`: Markdown and YAML metric reports.
+- `reports/`: Markdown and YAML metric reports, including `ms_per_img` speed measurements when the adapter emits timing.
 
 ## Project Structure
 
