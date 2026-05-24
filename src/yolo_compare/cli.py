@@ -62,7 +62,7 @@ def parse_args(prefix_args: list[str] | None) -> argparse.Namespace:
     train_group.add_argument("--all", action="store_true")
     train_parser.add_argument(
         "--adapter",
-        choices=("auto", "ultralytics", "yolov5", "yolov6", "yolov7"),
+        choices=("auto", "ultralytics", "rknn", "yolov5", "yolov6", "yolov7"),
         default="auto",
         help="Adapter for local/custom weights. Official configured weights use their configured adapter.",
     )
@@ -79,13 +79,21 @@ def parse_args(prefix_args: list[str] | None) -> argparse.Namespace:
     )
     test_parser.add_argument(
         "--weights",
-        help="Optional .pt weights to test. Defaults to <run-dir>/weights/best.pt.",
+        help=(
+            "Optional weights to test. Defaults to <run-dir>/train/weights/best.pt. "
+            "With --adapter rknn, this .pt file is exported to RKNN automatically."
+        ),
     )
     test_parser.add_argument(
         "--adapter",
-        choices=("auto", "ultralytics", "yolov5", "yolov6", "yolov7"),
+        choices=("auto", "ultralytics", "rknn", "yolov5", "yolov6", "yolov7"),
         default="auto",
         help="Adapter for --weights when no train snapshot exists.",
+    )
+    test_parser.add_argument(
+        "--video",
+        type=Path,
+        help="Optional video path for adapters that support video testing, such as rknn.",
     )
     test_parser.add_argument("--dry-run", action="store_true")
 
@@ -164,6 +172,14 @@ def test_one(
         default_weights = run_dir / "weights" / "best.pt"
     weights = Path(validate_weight_reference(args.weights, models)) if args.weights else default_weights
     model = model_for_test(run_dir, weights, models, args.adapter)
+    if args.video:
+        model = replace(
+            model,
+            raw={
+                **model.raw,
+                "rock5b_video": str(args.video.resolve()),
+            },
+        )
     prepared_yaml = prepare_dataset_yaml(
         experiment.dataset.root,
         experiment.dataset.yaml_path,
@@ -189,8 +205,17 @@ def test_one(
     adapter = build_adapter(model)
     adapter.test(experiment, prepared_yaml, run_dir, weights, args.dry_run)
     if not args.dry_run:
-        image_count = len(image_paths(experiment.dataset.root, experiment.test.split))
-        print_test_summary(run_dir, experiment.test.split, image_count)
+        image_count = (
+            None
+            if model.adapter == "rknn" and args.video
+            else len(image_paths(experiment.dataset.root, experiment.test.split))
+        )
+        report_name = (
+            f"{experiment.test.split}_report_rknn.yaml"
+            if model.adapter == "rknn"
+            else f"{experiment.test.split}_report.yaml"
+        )
+        print_test_summary(run_dir, experiment.test.split, image_count, report_name=report_name)
 
 
 def resolve_run_dir(run_dir_arg: Path, runs_root: Path) -> Path:
@@ -205,17 +230,25 @@ def resolve_run_dir(run_dir_arg: Path, runs_root: Path) -> Path:
     return run_dir_arg.resolve()
 
 
-def print_test_summary(run_dir: Path, split: str, image_count: int | None = None) -> None:
-    report_path = run_dir / "reports" / f"{split}_report.yaml"
+def print_test_summary(
+    run_dir: Path,
+    split: str,
+    image_count: int | None = None,
+    report_name: str | None = None,
+) -> None:
+    report_path = run_dir / "reports" / (report_name or f"{split}_report.yaml")
     if not report_path.exists():
         return
 
     report = read_yaml(report_path)
     overall = report.get("overall", {})
     image_count = report.get("image_count") or image_count
+    frame_count = report.get("frame_count")
     print("")
     print(f"{split.title()} summary")
     print(f"Images: {image_count or ''}")
+    if frame_count is not None:
+        print(f"Frames: {frame_count}")
     print(f"Precision: {format_summary_value(overall.get('precision'))}")
     print(f"Recall: {format_summary_value(overall.get('recall'))}")
     print(f"mAP50: {format_summary_value(overall.get('map50'))}")
@@ -240,7 +273,7 @@ def model_from_weights(
     matched = configured_model_for_weights(validated_weights, models)
     adapter = matched.adapter if matched and adapter_override == "auto" else adapter_override
     if adapter == "auto":
-        adapter = "ultralytics"
+        adapter = "rknn" if Path(validated_weights).suffix == ".rknn" else "ultralytics"
 
     if matched:
         return replace(
@@ -303,16 +336,16 @@ def configured_model_for_weights(
 
 def validate_weight_reference(weights: str, models: dict[str, ModelConfig]) -> str:
     path = Path(weights)
-    is_local_reference = path.is_absolute() or weights.startswith(".") or "/" in weights
+    is_local_reference = path.is_absolute() or weights.startswith(".") or "/" in weights or path.suffix == ".rknn"
 
     if is_local_reference and not path.exists():
         raise SystemExit(f"Local weights file does not exist: {weights}")
 
-    if is_local_reference and path.suffix != ".pt":
-        raise SystemExit(f"Local weights must be a .pt file: {weights}")
+    if is_local_reference and path.suffix not in {".pt", ".rknn"}:
+        raise SystemExit(f"Local weights must be a .pt or .rknn file: {weights}")
 
-    if not is_local_reference and path.suffix and path.suffix != ".pt":
-        raise SystemExit(f"Official weights must be a .pt weight name or stem: {weights}")
+    if not is_local_reference and path.suffix and path.suffix not in {".pt", ".rknn"}:
+        raise SystemExit(f"Official weights must be a .pt/.rknn weight name or stem: {weights}")
 
     matched = configured_model_for_weights(weights, models) if not is_local_reference else None
     if not is_local_reference and matched is None:

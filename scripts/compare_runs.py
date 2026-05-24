@@ -11,14 +11,19 @@ import yaml
 DEFAULT_MODELS_CONFIG = Path("configs/models.yaml")
 DEFAULT_RUNS_ROOT = Path("runs")
 DEFAULT_OUTPUT = Path("runs/reports/run_test_comparison.md")
+DEFAULT_RKNN_OUTPUT = Path("runs/reports/run_test_rknn_comparison.md")
 DEFAULT_RUN_NUMBER = "min"
+REPORT_BY_BACKEND = {
+    "standard": "test_report.yaml",
+    "rknn": "test_report_rknn.yaml",
+}
 
 
 def main() -> None:
     args = parse_args()
     models_config = args.models_config.resolve()
     runs_root = args.runs_root.resolve()
-    output = args.output.resolve()
+    output = (args.output or default_output(args.backend)).resolve()
     run_number = parse_run_number(args.run_number)
 
     models = selected_models(models_config, include_legacy=args.include_legacy)
@@ -26,7 +31,7 @@ def main() -> None:
     missing: list[str] = []
 
     for model_name, adapter in models:
-        report_path = test_report(runs_root, model_name, run_number)
+        report_path = test_report(runs_root, model_name, run_number, args.backend)
         if report_path is None:
             missing.append(model_name)
             continue
@@ -34,7 +39,8 @@ def main() -> None:
 
     if missing and run_number is not None:
         missing_runs = ", ".join(f"run_{model}_{run_number}" for model in missing)
-        raise SystemExit(f"Missing requested test reports: {missing_runs}")
+        report_name = REPORT_BY_BACKEND[args.backend]
+        raise SystemExit(f"Missing requested {report_name} reports: {missing_runs}")
 
     markdown = render_markdown(
         rows,
@@ -43,6 +49,7 @@ def main() -> None:
         runs_root,
         run_number=run_number,
         include_legacy=args.include_legacy,
+        backend=args.backend,
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(markdown, encoding="utf-8")
@@ -55,7 +62,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--models-config", type=Path, default=DEFAULT_MODELS_CONFIG)
     parser.add_argument("--runs-root", type=Path, default=DEFAULT_RUNS_ROOT)
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--backend",
+        choices=tuple(REPORT_BY_BACKEND),
+        default="standard",
+        help="Report backend to compare. Use rknn for test_report_rknn.yaml.",
+    )
     parser.add_argument(
         "--run-number",
         default=DEFAULT_RUN_NUMBER,
@@ -67,6 +80,10 @@ def parse_args() -> argparse.Namespace:
         help="Include legacy adapters such as yolov5/yolov6/yolov7. Defaults to false.",
     )
     return parser.parse_args()
+
+
+def default_output(backend: str) -> Path:
+    return DEFAULT_RKNN_OUTPUT if backend == "rknn" else DEFAULT_OUTPUT
 
 
 def parse_run_number(value: str) -> int | None:
@@ -96,9 +113,10 @@ def selected_models(models_config: Path, include_legacy: bool) -> list[tuple[str
     ]
 
 
-def test_report(runs_root: Path, model_name: str, run_number: int | None) -> Path | None:
+def test_report(runs_root: Path, model_name: str, run_number: int | None, backend: str) -> Path | None:
+    report_name = REPORT_BY_BACKEND[backend]
     if run_number is not None:
-        report_path = runs_root / f"run_{model_name}_{run_number}" / "reports" / "test_report.yaml"
+        report_path = runs_root / f"run_{model_name}_{run_number}" / "reports" / report_name
         return report_path if report_path.exists() else None
 
     candidates: list[tuple[int, Path]] = []
@@ -110,7 +128,7 @@ def test_report(runs_root: Path, model_name: str, run_number: int | None) -> Pat
         match = pattern.match(run_dir.name)
         if match is None:
             continue
-        report_path = run_dir / "reports" / "test_report.yaml"
+        report_path = run_dir / "reports" / report_name
         if report_path.exists():
             candidates.append((int(match.group(1)), report_path))
 
@@ -129,6 +147,8 @@ def row_from_report(model_name: str, adapter: str, report_path: Path) -> dict[st
     return {
         "model": model_name,
         "adapter": adapter,
+        "backend": report.get("backend") or "standard",
+        "mode": report.get("mode") or "",
         "run": report_path.parents[1].name,
         "images": report.get("image_count"),
         "precision": overall.get("precision"),
@@ -157,9 +177,11 @@ def render_markdown(
     runs_root: Path,
     run_number: int | None,
     include_legacy: bool,
+    backend: str,
 ) -> str:
+    report_name = REPORT_BY_BACKEND[backend]
     run_selection = (
-        "lowest run number with `reports/test_report.yaml`"
+        f"lowest run number with `reports/{report_name}`"
         if run_number is None
         else f"`run_<model>_{run_number}` only"
     )
@@ -169,19 +191,22 @@ def render_markdown(
         "",
         f"- Models config: `{models_config}`",
         f"- Runs root: `{runs_root}`",
+        f"- Backend: `{backend}` (`reports/{report_name}`).",
         f"- Scope: {scope}.",
         f"- Run selection: {run_selection}.",
         "",
-        "| Model | Adapter | Run | Images | Precision | Recall | mAP50 | mAP50-95 | Fitness | Total ms/img | Inference ms/img | Report |",
-        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+        "| Model | Adapter | Backend | Mode | Run | Images | Precision | Recall | mAP50 | mAP50-95 | Fitness | Total ms/img | Inference ms/img | Report |",
+        "| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
     ]
 
     for row in rows:
         lines.append(
-            "| {model} | {adapter} | {run} | {images} | {precision} | {recall} | {map50} | {map50_95} | "
+            "| {model} | {adapter} | {backend} | {mode} | {run} | {images} | {precision} | {recall} | {map50} | {map50_95} | "
             "{fitness} | {ms_img_total} | {ms_img_inference} | [{report_name}]({report}) |".format(
                 model=row["model"],
                 adapter=row["adapter"],
+                backend=row["backend"],
+                mode=row["mode"],
                 run=row["run"],
                 images=format_int(row["images"]),
                 precision=format_float(row["precision"]),

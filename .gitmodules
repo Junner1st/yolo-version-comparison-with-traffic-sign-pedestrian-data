@@ -1,0 +1,3 @@
+[submodule "external/Rock5B-RKNN-Traffic-Sign-Recognition"]
+	path = external/Rock5B-RKNN-Traffic-Sign-Recognition
+	url = https://github.com/Junner1st/Rock5B-RKNN-Traffic-Sign-Recognition.git

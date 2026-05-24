@@ -28,12 +28,7 @@ def write_snapshot(
         if path.exists():
             shutil.copy2(path, snapshot_dir / path.name)
 
-    freeze = subprocess.run(
-        ["uv", "pip", "freeze", "--python", sys.executable],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    pip_freeze = collect_pip_freeze()
 
     snapshot: dict[str, Any] = {
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -60,8 +55,26 @@ def write_snapshot(
             "python": sys.executable,
             "python_version": sys.version,
             "platform": platform.platform(),
-            "pip_freeze": freeze.stdout.splitlines(),
+            "pip_freeze": pip_freeze,
         },
     }
 
     write_yaml(run_dir / output_name, snapshot)
+
+
+def collect_pip_freeze() -> list[str]:
+    commands = []
+    if shutil.which("uv"):
+        commands.append(["uv", "pip", "freeze", "--python", sys.executable])
+    commands.append([sys.executable, "-m", "pip", "freeze"])
+
+    for command in commands:
+        freeze = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if freeze.returncode == 0:
+            return freeze.stdout.splitlines()
+    return []

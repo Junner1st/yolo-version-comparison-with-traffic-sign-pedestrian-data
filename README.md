@@ -88,6 +88,54 @@ uv run python src/test.py --run-dir run_yolov8n_1 --split train
 
 `test.py` prints a final summary with image count, precision, recall, mAP50, mAP50-95, ms/img, and the report path.
 
+### Test On Rock5B With RKNN
+
+The Rock5B/RK3588 test path is exposed through the `rknn` adapter. The original Rock5B project is linked as a submodule under `external/Rock5B-RKNN-Traffic-Sign-Recognition`:
+
+```bash
+git submodule update --init --recursive
+```
+
+Run RKNN evaluation from an existing training run:
+
+```bash
+python3 src/test.py --run-dir run_yolov8n_1 --adapter rknn
+```
+
+Run RKNN video recognition through the same submodule bridge:
+
+```bash
+python3 src/test.py --run-dir run_yolov8n_1 --adapter rknn --video data/videos/sample-day-1.mp4
+```
+
+The yolo-ver-comp adapter only delegates to the Rock5B submodule. The submodule finds `<run-dir>/train/weights/best.pt`, exports it with Ultralytics RKNN export when needed, then runs RKNNLite inference. The exported model is reused on later runs:
+
+```text
+runs/run_x/train/weights/best_rknn_model/best-rk3588.rknn
+```
+
+RKNN outputs are kept separate from normal YOLO test outputs:
+
+```text
+runs/run_x/test_rknn/
+runs/run_x/reports/test_report_rknn.md
+runs/run_x/reports/test_report_rknn.yaml
+```
+
+All RKNN-specific conversion, image/video testing, and report generation live in the Rock5B submodule. yolo-ver-comp only prepares paths and calls `external/Rock5B-RKNN-Traffic-Sign-Recognition/src/yolo_ver_comp_bridge.py` through CLI args.
+
+By default, yolo-ver-comp runs the bridge in the submodule's own uv project:
+
+```bash
+uv run --directory external/Rock5B-RKNN-Traffic-Sign-Recognition --group export --group runtime python src/yolo_ver_comp_bridge.py ...
+```
+
+Set `ROCK5B_RKNN_PYTHON` when the Rock5B dependencies live in another environment, such as system Python with `python3-rknnlite2`:
+
+```bash
+ROCK5B_RKNN_PYTHON=python3 uv run python src/test.py --run-dir run_yolov8n_1 --adapter rknn
+```
+
 ## Environment
 
 Create and sync the project environment with `uv`:
