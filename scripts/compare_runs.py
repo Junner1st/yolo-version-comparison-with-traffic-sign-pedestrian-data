@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import html
 import re
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,7 @@ def main() -> None:
         report_name = REPORT_BY_BACKEND[args.backend]
         raise SystemExit(f"Missing requested {report_name} reports: {missing_runs}")
 
+    thermal_plots = write_thermal_comparison_plots(rows, output)
     markdown = render_markdown(
         rows,
         missing,
@@ -50,6 +52,7 @@ def main() -> None:
         run_number=run_number,
         include_legacy=args.include_legacy,
         backend=args.backend,
+        thermal_plots=thermal_plots,
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(markdown, encoding="utf-8")
@@ -143,6 +146,7 @@ def row_from_report(model_name: str, adapter: str, report_path: Path) -> dict[st
     ms_per_img = report.get("ms_per_img", {})
     speed = report.get("speed", {})
     total_ms_img = ms_per_img.get("total") or total_speed(speed)
+    temperature = report.get("temperature", {})
 
     return {
         "model": model_name,
@@ -159,6 +163,7 @@ def row_from_report(model_name: str, adapter: str, report_path: Path) -> dict[st
         "ms_img_total": total_ms_img,
         "ms_img_inference": ms_per_img.get("inference") or speed.get("inference"),
         "report": report_path,
+        "temperature_samples": temperature.get("samples", []),
     }
 
 
@@ -178,6 +183,7 @@ def render_markdown(
     run_number: int | None,
     include_legacy: bool,
     backend: str,
+    thermal_plots: list[dict[str, str]],
 ) -> str:
     report_name = REPORT_BY_BACKEND[backend]
     run_selection = (
@@ -221,6 +227,28 @@ def render_markdown(
             )
         )
 
+    if thermal_plots:
+        lines.extend(
+            [
+                "",
+                "## Thermal Samples",
+                "",
+                "- All available thermal sensors are plotted separately.",
+                f"- X axis: time (s).",
+                f"- Y axis: temperature (C).",
+                "",
+            ]
+        )
+        for plot in thermal_plots:
+            lines.extend(
+                [
+                    f"### {plot['sensor']}",
+                    "",
+                    f"![{plot['sensor']} thermal comparison]({plot['file']})",
+                    "",
+                ]
+            )
+
     if missing:
         lines.extend(["", "## Missing Test Reports", ""])
         for model_name in missing:
@@ -228,6 +256,199 @@ def render_markdown(
 
     lines.append("")
     return "\n".join(lines)
+
+
+def write_thermal_comparison_plots(rows: list[dict[str, Any]], report_path: Path) -> list[dict[str, str]]:
+    remove_stale_thermal_plots(report_path)
+    sensors = thermal_sensor_names(rows)
+    if not sensors:
+        return []
+
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    plots: list[dict[str, str]] = []
+    for sensor_name in sensors:
+        series = thermal_series(rows, sensor_name)
+        if not series:
+            continue
+        output_path = report_path.with_name(f"{report_path.stem}_thermal_{slugify(sensor_name)}.svg")
+        output_path.write_text(render_thermal_svg(series, sensor_name), encoding="utf-8")
+        plots.append({"sensor": sensor_name, "file": output_path.name})
+    return plots
+
+
+def remove_stale_thermal_plots(report_path: Path) -> None:
+    if not report_path.parent.exists():
+        return
+    for path in report_path.parent.glob(f"{report_path.stem}_thermal*.svg"):
+        remove_path(path)
+
+
+def remove_path(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def thermal_sensor_names(rows: list[dict[str, Any]]) -> list[str]:
+    names: set[str] = set()
+    for row in rows:
+        samples = row.get("temperature_samples", [])
+        if not isinstance(samples, list):
+            continue
+        for sample in samples:
+            temperatures = sample.get("temperatures_c", {})
+            if isinstance(temperatures, dict):
+                names.update(str(name) for name in temperatures)
+    return sorted(names, key=thermal_sensor_sort_key)
+
+
+def thermal_sensor_sort_key(sensor_name: str) -> tuple[int, str]:
+    order = [
+        "soc",
+        "bigcore0",
+        "bigcore1",
+        "littlecore",
+        "center",
+        "gpu",
+        "npu",
+    ]
+    lower = sensor_name.lower()
+    for index, token in enumerate(order):
+        if token in lower:
+            return index, lower
+    return len(order), lower
+
+
+def thermal_series(rows: list[dict[str, Any]], sensor_name: str) -> list[dict[str, Any]]:
+    series: list[dict[str, Any]] = []
+    for row in rows:
+        samples = row.get("temperature_samples", [])
+        if not isinstance(samples, list):
+            continue
+        points = sample_points(samples, sensor_name)
+        if len(points) < 2:
+            continue
+        series.append(
+            {
+                "label": f"{row['model']} ({row['run']})",
+                "sensor": sensor_name,
+                "points": points,
+            }
+        )
+    return series
+
+
+def sample_points(samples: list[dict[str, Any]], sensor_name: str) -> list[tuple[float, float]]:
+    points: list[tuple[float, float]] = []
+    for sample in samples:
+        temperatures = sample.get("temperatures_c", {})
+        if not isinstance(temperatures, dict):
+            continue
+        if sensor_name not in temperatures:
+            continue
+        try:
+            elapsed = float(sample.get("elapsed_s", 0.0))
+            temp = float(temperatures[sensor_name])
+        except (TypeError, ValueError):
+            continue
+        points.append((elapsed, temp))
+    return points
+
+
+def render_thermal_svg(series: list[dict[str, Any]], sensor_name: str) -> str:
+    width, height = 980, 520
+    left, right, top, bottom = 64, 250, 42, 52
+    plot_width = width - left - right
+    plot_height = height - top - bottom
+    colors = [
+        "#2563eb",
+        "#dc2626",
+        "#16a34a",
+        "#9333ea",
+        "#ea580c",
+        "#0891b2",
+        "#4f46e5",
+        "#be123c",
+    ]
+    all_points = [point for item in series for point in item["points"]]
+    min_time = 0.0
+    max_time = max(point[0] for point in all_points)
+    temps = [point[1] for point in all_points]
+    min_temp, max_temp = min(temps), max(temps)
+    if min_temp == max_temp:
+        min_temp -= 0.5
+        max_temp += 0.5
+    else:
+        padding = max(0.5, (max_temp - min_temp) * 0.15)
+        min_temp -= padding
+        max_temp += padding
+
+    def sx(value: float) -> float:
+        if max_time <= min_time:
+            return left
+        return left + (value - min_time) * plot_width / (max_time - min_time)
+
+    def sy(value: float) -> float:
+        return top + (max_temp - value) * plot_height / (max_temp - min_temp)
+
+    y_ticks = tick_values(min(temps), max(temps), 5)
+    x_ticks = tick_values(min_time, max_time, 6)
+    grid = "\n".join(
+        f'  <line x1="{left}" y1="{sy(value):.2f}" x2="{left + plot_width}" y2="{sy(value):.2f}" stroke="#e2e8f0" stroke-width="1"/>'
+        f'\n  <text x="{left - 8}" y="{sy(value) + 4:.2f}" text-anchor="end" font-family="Arial, sans-serif" font-size="11" fill="#475569">{value:.1f}</text>'
+        for value in y_ticks
+    )
+    x_labels = "\n".join(
+        f'  <text x="{sx(value):.2f}" y="{height - 18}" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#475569">{value:.0f}</text>'
+        for value in x_ticks
+    )
+
+    paths: list[str] = []
+    legend: list[str] = []
+    for index, item in enumerate(series):
+        color = colors[index % len(colors)]
+        polyline = " ".join(f"{sx(elapsed):.2f},{sy(temp):.2f}" for elapsed, temp in item["points"])
+        paths.append(
+            f'  <polyline points="{polyline}" fill="none" stroke="{color}" stroke-width="2.3" stroke-linejoin="round" stroke-linecap="round"/>'
+        )
+        legend_y = top + 8 + index * 24
+        label = html.escape(str(item["label"]))
+        sensor = html.escape(str(item["sensor"]))
+        count = len(item["points"])
+        legend.append(
+            f'  <line x1="{left + plot_width + 28}" y1="{legend_y}" x2="{left + plot_width + 48}" y2="{legend_y}" stroke="{color}" stroke-width="3"/>'
+            f'\n  <text x="{left + plot_width + 56}" y="{legend_y + 4}" font-family="Arial, sans-serif" font-size="12" fill="#1f2933">{label}</text>'
+            f'\n  <text x="{left + plot_width + 56}" y="{legend_y + 18}" font-family="Arial, sans-serif" font-size="10" fill="#64748b">{sensor}, {count} samples</text>'
+        )
+
+    title = html.escape(f"Thermal comparison ({sensor_name})")
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}" role="img" aria-label="{title}">
+  <title>{title}</title>
+  <rect width="100%" height="100%" fill="#ffffff"/>
+  <text x="{left}" y="24" font-family="Arial, sans-serif" font-size="16" font-weight="700" fill="#1f2933">{title}</text>
+  <text x="{left + plot_width / 2:.2f}" y="{height - 4}" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#475569">time (s)</text>
+  <text x="16" y="{top + plot_height / 2:.2f}" transform="rotate(-90 16 {top + plot_height / 2:.2f})" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#475569">temp (C)</text>
+  <line x1="{left}" y1="{top + plot_height}" x2="{left + plot_width}" y2="{top + plot_height}" stroke="#94a3b8" stroke-width="1"/>
+  <line x1="{left}" y1="{top}" x2="{left}" y2="{top + plot_height}" stroke="#94a3b8" stroke-width="1"/>
+{grid}
+{x_labels}
+{chr(10).join(paths)}
+{chr(10).join(legend)}
+</svg>
+"""
+
+
+def slugify(value: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9]+", "_", value.strip().lower()).strip("_")
+    return slug or "sensor"
+
+
+def tick_values(min_value: float, max_value: float, count: int) -> list[float]:
+    if count <= 1 or max_value == min_value:
+        return [min_value]
+    step = (max_value - min_value) / (count - 1)
+    return [min_value + step * index for index in range(count)]
 
 
 def format_float(value: Any) -> str:

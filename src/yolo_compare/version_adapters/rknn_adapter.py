@@ -88,6 +88,8 @@ def build_rock5b_command(
         report_dir / f"{test.split}_report_rknn.md",
         "--max-images",
         str(test.max_images),
+        "--temperature-interval",
+        str(model_raw.get("rknn_temperature_interval", model_raw.get("temperature_interval", 1.0))),
     ]
 
     video = model_raw.get("rock5b_video") or model_raw.get("video")
@@ -98,6 +100,9 @@ def build_rock5b_command(
 
     if model_raw.get("no_save_video"):
         command.append("--no-save-video")
+
+    if model_raw.get("no_temperature_log"):
+        command.append("--no-temperature-log")
 
     return command
 

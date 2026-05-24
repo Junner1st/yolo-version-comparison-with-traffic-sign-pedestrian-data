@@ -122,6 +122,19 @@ runs/run_x/reports/test_report_rknn.md
 runs/run_x/reports/test_report_rknn.yaml
 ```
 
+RKNN tests record Linux thermal-zone temperatures by default. The YAML report keeps both per-sample readings and per-sensor summaries; the Markdown report shows start/end/min/max/avg temperatures and embeds an NPU temperature curve when an `npu` thermal sensor is available.
+
+```bash
+python3 src/test.py --run-dir run_yolov8n_1 --adapter rknn --temperature-interval 0.5
+python3 src/test.py --run-dir run_yolov8n_1 --adapter rknn --no-temperature-log
+```
+
+RKNN comparison reports also plot all matching thermal samples together:
+
+```bash
+uv run python scripts/compare_runs.py --backend rknn
+```
+
 All RKNN-specific conversion, image/video testing, and report generation live in the Rock5B submodule. yolo-ver-comp only prepares paths and calls `external/Rock5B-RKNN-Traffic-Sign-Recognition/src/yolo_ver_comp_bridge.py` through CLI args.
 
 By default, yolo-ver-comp runs the bridge in the submodule's own uv project:

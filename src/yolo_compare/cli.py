@@ -95,6 +95,16 @@ def parse_args(prefix_args: list[str] | None) -> argparse.Namespace:
         type=Path,
         help="Optional video path for adapters that support video testing, such as rknn.",
     )
+    test_parser.add_argument(
+        "--temperature-interval",
+        type=float,
+        help="Seconds between temperature samples for adapters that support hardware telemetry, such as rknn.",
+    )
+    test_parser.add_argument(
+        "--no-temperature-log",
+        action="store_true",
+        help="Disable temperature sampling for adapters that support it.",
+    )
     test_parser.add_argument("--dry-run", action="store_true")
 
     command_line = [*prefix_args, *sys.argv[1:]] if prefix_args else sys.argv[1:]
@@ -180,6 +190,19 @@ def test_one(
                 "rock5b_video": str(args.video.resolve()),
             },
         )
+    if args.temperature_interval is not None or args.no_temperature_log:
+        model = replace(
+            model,
+            raw={
+                **model.raw,
+                **(
+                    {"rknn_temperature_interval": args.temperature_interval}
+                    if args.temperature_interval is not None
+                    else {}
+                ),
+                **({"no_temperature_log": True} if args.no_temperature_log else {}),
+            },
+        )
     prepared_yaml = prepare_dataset_yaml(
         experiment.dataset.root,
         experiment.dataset.yaml_path,
@@ -255,7 +278,20 @@ def print_test_summary(
     print(f"mAP50-95: {format_summary_value(overall.get('map50_95'))}")
     ms_per_img = report.get("ms_per_img", {})
     print(f"ms/img: {format_summary_value(ms_per_img.get('total'))}")
+    max_temperature = max_temperature_c(report.get("temperature", {}))
+    if max_temperature is not None:
+        print(f"Max temperature C: {format_summary_value(max_temperature)}")
     print(f"Report: {report_path}")
+
+
+def max_temperature_c(temperature: dict) -> float | None:
+    sensor_summaries = temperature.get("sensors", {})
+    values = [
+        float(summary["max_c"])
+        for summary in sensor_summaries.values()
+        if isinstance(summary, dict) and summary.get("max_c") is not None
+    ]
+    return max(values) if values else None
 
 
 def format_summary_value(value) -> str:
